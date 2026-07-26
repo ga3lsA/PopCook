@@ -192,8 +192,9 @@ select.chip{appearance:none; padding-right:30px; background-image:url("data:imag
 .profile-hero{display:flex; gap:20px; align-items:center; padding:28px 0;}
 .avatar{
   width:84px; height:84px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-  font-family:var(--font-display); font-size:26px; font-weight:700; color:#fff; flex-shrink:0; position:relative;
+  font-family:var(--font-display); font-size:26px; font-weight:700; color:#fff; flex-shrink:0; position:relative; overflow:hidden;
 }
+.avatar .media-photo{border-radius:50%;}
 .avatar .verified{
   position:absolute; bottom:-2px; right:-2px; width:26px; height:26px; background:var(--sage); border-radius:50%;
   border:3px solid var(--cream); display:flex; align-items:center; justify-content:center;
@@ -323,24 +324,24 @@ function phIcon(kind){
    ============================================================ */
 const DATA = {
   cooks: [
-    { id:'c1', name:'Élodie M.', initials:'EM', color:'linear-gradient(150deg,#F4C892,#F0872A)', cuisine:'Méditerranéenne', specialty:'Tajines & mezzés faits maison', rating:4.8, reviews:63, quartier:'Belleville', distance:'0,6 km', verified:true,
+    { id:'c1', name:'Élodie M.', initials:'EM', color:'linear-gradient(150deg,#F4C892,#F0872A)', photo:'https://api.dicebear.com/9.x/avataaars/svg?seed=Elodie-PopCook', cuisine:'Méditerranéenne', specialty:'Tajines & mezzés faits maison', rating:4.8, reviews:63, quartier:'Belleville', distance:'0,6 km', verified:true,
       bio:"Cuisinière amateur depuis toujours, je prépare des recettes de ma grand-mère tunisienne avec des produits du marché de Belleville. Cuisine sans conservateurs, tout est fait le matin même.",
       dishes:[
         { id:'d1', cookId:'c1', name:"Tajine d'agneau aux pruneaux", ph:'ph-1', kind:'tajine', desc:"Épaule d'agneau mijotée lentement avec pruneaux, amandes et épices douces, servi avec semoule.", price:14, allergens:['Fruits à coque'], qty:6, slot:'12h00 – 13h30', tag:'Best-seller', photo:'https://commons.wikimedia.org/wiki/Special:FilePath/Lamb%20Tajine%20at%20Chambar.jpg?width=800' },
         { id:'d2', cookId:'c1', name:'Houmous maison & pain pita', ph:'ph-2', kind:'mezze', desc:"Houmous crémeux au tahini, pois chiches cuits maison, pain pita tiède fait le jour même.", price:6, allergens:['Sésame'], qty:10, slot:'12h00 – 14h00', tag:null, photo:'https://commons.wikimedia.org/wiki/Special:FilePath/Houmous.jpg?width=800' },
       ] },
-    { id:'c2', name:'Karim B.', initials:'KB', color:'linear-gradient(150deg,#E8B4A6,#C24B3F)', cuisine:'Libanaise', specialty:'Mezzés & grillades', rating:4.9, reviews:97, quartier:'Belleville', distance:'0,9 km', verified:true,
+    { id:'c2', name:'Karim B.', initials:'KB', color:'linear-gradient(150deg,#E8B4A6,#C24B3F)', photo:'https://api.dicebear.com/9.x/avataaars/svg?seed=Karim-PopCook', cuisine:'Libanaise', specialty:'Mezzés & grillades', rating:4.9, reviews:97, quartier:'Belleville', distance:'0,9 km', verified:true,
       bio:"Originaire de Beyrouth, je cuisine les recettes familiales que ma mère m'a transmises. Grillades marinées 24h et mezzés préparés chaque matin.",
       dishes:[
         { id:'d3', cookId:'c2', name:'Chich taouk & riz vermicelle', ph:'ph-3', kind:'grillade', desc:"Poulet mariné au yaourt et épices libanaises, grillé, servi avec riz vermicelle et sauce à l'ail.", price:12, allergens:['Gluten'], qty:8, slot:'19h00 – 20h30', tag:'Best-seller', photo:'https://commons.wikimedia.org/wiki/Special:FilePath/Tawook%20breast%20platter.jpg?width=800' },
         { id:'d4', cookId:'c2', name:'Baklava maison (x3)', ph:'ph-5', kind:'dessert', desc:"Feuilles de filo, pistaches et sirop de fleur d'oranger. Fait la veille pour un croustillant parfait.", price:5, allergens:['Fruits à coque','Gluten'], qty:15, slot:'19h00 – 21h00', tag:null, photo:'https://commons.wikimedia.org/wiki/Special:FilePath/Des%20Baklavas%20fait%20maison%20en%20juin%202021.jpg?width=800' },
       ] },
-    { id:'c3', name:'Fatou D.', initials:'FD', color:'linear-gradient(150deg,#A9C2DE,#2C4570)', cuisine:'Sénégalaise', specialty:'Thiéboudienne', rating:5.0, reviews:41, quartier:'Belleville', distance:'1,1 km', verified:true,
+    { id:'c3', name:'Fatou D.', initials:'FD', color:'linear-gradient(150deg,#A9C2DE,#2C4570)', photo:'https://api.dicebear.com/9.x/avataaars/svg?seed=Fatou-PopCook', cuisine:'Sénégalaise', specialty:'Thiéboudienne', rating:5.0, reviews:41, quartier:'Belleville', distance:'1,1 km', verified:true,
       bio:"Le thiéboudienne de ma maman, revisité avec des poissons de saison. Une seule recette, mais perfectionnée depuis 20 ans.",
       dishes:[
         { id:'d5', cookId:'c3', name:'Thiéboudienne au poisson', ph:'ph-4', kind:'poisson', desc:"Riz au poisson braisé, légumes mijotés et sauce tomate épicée, recette traditionnelle sénégalaise.", price:13, allergens:['Poisson'], qty:5, slot:'12h30 – 14h00', tag:'Best-seller', photo:'https://commons.wikimedia.org/wiki/Special:FilePath/Senegalese%20Thieboudienne.JPG?width=800' },
       ] },
-    { id:'c4', name:'Marco R.', initials:'MR', color:'linear-gradient(150deg,#D6B7DA,#7B4A8C)', cuisine:'Italienne', specialty:'Pâtes fraîches du jour', rating:4.7, reviews:28, quartier:'Ménilmontant', distance:'1,6 km', verified:false,
+    { id:'c4', name:'Marco R.', initials:'MR', color:'linear-gradient(150deg,#D6B7DA,#7B4A8C)', photo:'https://api.dicebear.com/9.x/avataaars/svg?seed=Marco-PopCook', cuisine:'Italienne', specialty:'Pâtes fraîches du jour', rating:4.7, reviews:28, quartier:'Ménilmontant', distance:'1,6 km', verified:false,
       bio:"Pâtes fraîches roulées à la main chaque matin, comme chez ma nonna à Bologne. Petites quantités, grande exigence.",
       dishes:[
         { id:'d6', cookId:'c4', name:'Tagliatelles à la truffe', ph:'ph-6', kind:'pates', desc:"Tagliatelles fraîches, crème légère à la truffe noire et parmesan 24 mois.", price:15, allergens:['Gluten','Œuf','Lactose'], qty:4, slot:'19h30 – 21h00', tag:null, photo:'https://commons.wikimedia.org/wiki/Special:FilePath/Tomato%20and%20truffle%20sauce%20fried%20pasta%20dishes.jpg?width=800' },
@@ -517,6 +518,7 @@ function CookCard(c){
   return `
   <div class="card" onclick="go('client','cook',{cookId:'${c.id}'})">
     <div class="card-media" style="background:${c.color}">
+      ${c.photo?`<img src="${c.photo}" alt="${c.name}" class="media-photo" loading="lazy" onerror="this.remove()">`:''}
       ${phIcon('mezze')}
       <span class="rating-badge">★ ${c.rating}</span>
       ${seal('#fff','var(--navy)')}
@@ -572,6 +574,7 @@ function ViewCook(){
     <p class="breadcrumb"><a onclick="go('client','browse')">Explorer</a> / ${c.name}</p>
     <div class="profile-hero">
       <div class="avatar" style="background:${c.color}">${c.initials}
+        ${c.photo?`<img src="${c.photo}" alt="${c.name}" class="media-photo" loading="lazy" onerror="this.remove()">`:''}
         ${c.verified?`<span class="verified">${ICONS.check}</span>`:''}
       </div>
       <div class="profile-meta">
