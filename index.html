@@ -293,7 +293,22 @@ footer.site-footer{border-top:1px solid var(--line); padding:36px 0; margin-top:
 <div id="app"></div>
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+/* ============================================================
+   BACKEND CONFIG — Supabase
+   Colle ici l'URL et la clé "anon public" de ton projet Supabase
+   (Project Settings → API). Tant que c'est vide, l'app fonctionne
+   normalement avec les données de démo statiques ci-dessous.
+   ============================================================ */
+const CONFIG = {
+  SUPABASE_URL: '',
+  SUPABASE_ANON_KEY: '',
+};
+const supa = (CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY)
+  ? window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY)
+  : null;
+
 /* ============================================================
    LOGO — official PopCook mark (embedded as data URI)
    ============================================================ */
@@ -383,13 +398,166 @@ const state = {
   cart: [],
   filters: { cuisine: 'all', quartier: 'all', sort: 'reco' },
   reviewDraft: { orderId: null, rating: 0, text: '' },
+  session: null,
+  profile: null,
+  myCook: null,
+  myOrders: [],
+  myCookOrders: [],
+  authMode: 'login',
+  authError: '',
 };
+const KIND_PH = {tajine:'ph-1', mezze:'ph-2', grillade:'ph-3', poisson:'ph-4', dessert:'ph-5', pates:'ph-6'};
+function normalizeDish(row, cookId){
+  return {
+    id: row.id, cookId: cookId, name: row.name, ph: KIND_PH[row.kind] || 'ph-1', kind: row.kind,
+    desc: row.description || '', price: Number(row.price), allergens: row.allergens || [],
+    qty: row.qty, slot: row.slot, tag: row.tag || null, photo: row.photo || null,
+  };
+}
+function normalizeCook(row){
+  return {
+    id: row.id, name: row.name, initials: row.initials, color: row.color,
+    photo: row.photo || null, cuisine: row.cuisine, specialty: row.specialty, bio: row.bio,
+    quartier: row.quartier, distance: row.distance || '—', verified: row.verified,
+    rating: Number(row.rating), reviews: row.reviews_count,
+    dishes: (row.dishes || []).map(d => normalizeDish(d, row.id)),
+  };
+}
+
+/* ============================================================
+   BACKEND — Supabase data & auth (no-op if CONFIG is empty,
+   the app then runs entirely on the static DATA above)
+   ============================================================ */
+async function loadCooksAndDishes(){
+  if(!supa) return;
+  const { data, error } = await supa.from('cooks').select('*, dishes(*)').order('created_at');
+  if(error || !data || data.length===0) return; // keep static demo data as fallback
+  DATA.cooks = data.map(normalizeCook);
+}
+async function refreshMyOrders(){
+  if(!supa || !state.session) return;
+  const { data } = await supa.from('orders').select('*').eq('client_id', state.session.user.id).order('created_at', {ascending:false});
+  state.myOrders = (data||[]).map(o=>({
+    id:o.id, dishName:o.dish_name, cookName:o.cook_name,
+    date:new Date(o.created_at).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}),
+    status:o.status, price:Number(o.total), reviewed:o.reviewed,
+  }));
+}
+async function refreshMyCook(){
+  if(!supa || !state.session) return;
+  const { data: cookRow } = await supa.from('cooks').select('*, dishes(*)').eq('id', state.session.user.id).maybeSingle();
+  state.myCook = cookRow ? normalizeCook(cookRow) : null;
+  if(state.myCook){
+    const { data: orderRows } = await supa.from('orders').select('*, client:profiles(email)').eq('cook_id', state.myCook.id).order('created_at', {ascending:false});
+    state.myCookOrders = (orderRows||[]).map(o=>({
+      id:o.id, client:o.client?.email || 'Client', dish:o.dish_name, qty:o.qty, total:Number(o.total), status:o.status, slot:o.slot,
+    }));
+  } else {
+    state.myCookOrders = [];
+  }
+}
+async function onSessionChange(session){
+  state.session = session;
+  state.profile = null; state.myCook = null; state.myOrders = []; state.myCookOrders = [];
+  if(session){
+    await Promise.all([ refreshMyOrders(), refreshMyCook() ]);
+  }
+}
+async function initSupabase(){
+  if(!supa) return;
+  supa.auth.onAuthStateChange((_event, session) => { onSessionChange(session).then(render); });
+  const { data:{ session } } = await supa.auth.getSession();
+  await onSessionChange(session);
+  await loadCooksAndDishes();
+  render();
+}
+function currentCookData(){
+  if(supa && state.myCook) return { cook: state.myCook, orders: state.myCookOrders || [] };
+  return { cook: DATA.cooks[0], orders: DATA.cookOrders };
+}
+function CookGate(){
+  if(!supa) return null;
+  if(!state.session) return AuthForm('cook');
+  if(!state.myCook) return CookOnboardingForm();
+  return null;
+}
+function toggleAuthMode(){ state.authMode = state.authMode==='signup' ? 'login' : 'signup'; state.authError=''; render(); }
+function AuthForm(role){
+  return `
+  <div class="wrap section">
+    <div class="form-card" style="max-width:420px; margin:40px auto 0;">
+      <h3>${state.authMode==='signup' ? 'Créer un compte' : 'Se connecter'}</h3>
+      <p class="card-sub" style="margin-bottom:16px;">${role==='cook' ? 'Connectez-vous pour accéder à votre espace cuisinier.' : 'Connectez-vous pour commander et suivre vos plats.'}</p>
+      ${state.authError ? `<p class="card-sub" style="color:var(--danger); margin-bottom:10px;">${state.authError}</p>` : ''}
+      <div class="field"><label>E-mail</label><input type="email" id="auth-email" placeholder="vous@exemple.com"></div>
+      <div class="field"><label>Mot de passe</label><input type="password" id="auth-password" placeholder="••••••••"></div>
+      <button class="btn btn-primary btn-block" onclick="${state.authMode==='signup' ? 'submitSignup()' : 'submitLogin()'}">${state.authMode==='signup' ? "S'inscrire" : 'Se connecter'}</button>
+      <p class="helper" style="text-align:center; margin-top:12px;">
+        ${state.authMode==='signup' ? 'Déjà un compte ?' : "Pas encore de compte ?"}
+        <a onclick="toggleAuthMode()" style="color:var(--navy); font-weight:700; cursor:pointer;">${state.authMode==='signup' ? 'Se connecter' : "S'inscrire"}</a>
+      </p>
+    </div>
+  </div>`;
+}
+async function submitSignup(){
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  if(!email || password.length<6){ state.authError='E-mail et mot de passe (6 caractères min.) requis.'; render(); return; }
+  const { error } = await supa.auth.signUp({ email, password });
+  if(error){ state.authError = error.message; render(); return; }
+  state.authError = '';
+  showToast('Compte créé. Si la confirmation par e-mail est activée, vérifiez votre boîte de réception.');
+  render();
+}
+async function submitLogin(){
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const { error } = await supa.auth.signInWithPassword({ email, password });
+  if(error){ state.authError = error.message; render(); return; }
+  state.authError = '';
+}
+async function logout(){
+  await supa.auth.signOut();
+  showToast('Déconnecté');
+}
+function CookOnboardingForm(){
+  return `
+  <div class="wrap section">
+    <div class="form-card" style="max-width:480px; margin:40px auto 0;">
+      <h3>Devenir cuisinier PopCook</h3>
+      <p class="card-sub" style="margin-bottom:16px;">Quelques infos pour créer votre profil public.</p>
+      <div class="field"><label>Nom affiché</label><input type="text" id="cook-name" placeholder="Ex. Camille D."></div>
+      <div class="field"><label>Cuisine</label><input type="text" id="cook-cuisine" placeholder="Ex. Méditerranéenne"></div>
+      <div class="field"><label>Spécialité</label><input type="text" id="cook-specialty" placeholder="Ex. Tajines faits maison"></div>
+      <div class="field"><label>Quartier</label><input type="text" id="cook-quartier" placeholder="Ex. Belleville"></div>
+      <button class="btn btn-primary btn-block" onclick="submitCookProfile()">Créer mon profil cuisinier</button>
+    </div>
+  </div>`;
+}
+async function submitCookProfile(){
+  const name = document.getElementById('cook-name').value.trim();
+  const cuisine = document.getElementById('cook-cuisine').value.trim();
+  const specialty = document.getElementById('cook-specialty').value.trim();
+  const quartier = document.getElementById('cook-quartier').value.trim();
+  if(!name || !cuisine){ showToast('Nom et cuisine sont requis'); return; }
+  const initials = name.split(' ').map(x=>x[0]).filter(Boolean).slice(0,2).join('').toUpperCase();
+  const { data, error } = await supa.from('cooks').insert({ id: state.session.user.id, name, initials, cuisine, specialty, quartier }).select().single();
+  if(error){ showToast('Erreur : ' + error.message); return; }
+  state.myCook = normalizeCook({...data, dishes:[]});
+  state.myCookOrders = [];
+  showToast('Profil cuisinier créé !');
+  go('cook','dashboard');
+}
 
 function go(role, view, params={}){
   state.role = role; state.view = view;
   Object.assign(state, params);
   window.scrollTo({top:0, behavior:'instant'});
   render();
+  if(supa && state.session){
+    if(role==='client' && view==='account') refreshMyOrders().then(render);
+    if(role==='cook' && ['dashboard','dishes','orders','earnings'].includes(view)) refreshMyCook().then(render);
+  }
 }
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -623,7 +791,7 @@ function ViewDish(){
         <div class="line-row"><span>Frais de service</span><span>0,50 €</span></div>
         <div class="line-row total"><span>Total</span><span>${(d.price*state.qty+0.5).toFixed(2)} €</span></div>
         <button class="btn btn-primary btn-block" style="margin-top:16px;" onclick="addToCart('${d.id}')">Ajouter au panier</button>
-        <p class="helper" style="text-align:center; margin-top:10px;">Paiement sécurisé, argent séquestré jusqu'au retrait.</p>
+        <p class="helper" style="text-align:center; margin-top:10px;">Vous payez directement au retrait, auprès du cuisinier.</p>
       </div>
     </div>
   </div>`;
@@ -680,8 +848,8 @@ function ViewCart(){
         <div class="line-row"><span>Sous-total</span><span>${subtotal.toFixed(2)} €</span></div>
         <div class="line-row"><span>Frais de service</span><span>${fees.toFixed(2)} €</span></div>
         <div class="line-row total"><span>Total</span><span>${(subtotal+fees).toFixed(2)} €</span></div>
-        <button class="btn btn-primary btn-block" style="margin-top:16px;" onclick="checkout()">Payer avec Stripe</button>
-        <p class="helper" style="text-align:center; margin-top:10px;">🔒 Paiement sécurisé · Confirmation immédiate par e-mail</p>
+        <button class="btn btn-primary btn-block" style="margin-top:16px;" onclick="checkout()">Confirmer la commande</button>
+        <p class="helper" style="text-align:center; margin-top:10px;">Paiement directement auprès du cuisinier au retrait.</p>
       </div>
     </div>
   </div>`;
@@ -691,7 +859,28 @@ function cartQty(idx,delta){
   render();
 }
 function removeCart(idx){ state.cart.splice(idx,1); render(); }
-function checkout(){
+async function checkout(){
+  if(supa && !state.session){
+    showToast('Connectez-vous pour valider votre commande');
+    go('client','account');
+    return;
+  }
+  if(supa && state.session){
+    try{
+      for(const item of state.cart){
+        const { error } = await supa.rpc('place_order', { p_dish_id: item.dishId, p_qty: item.qty });
+        if(error) throw error;
+      }
+    }catch(e){
+      showToast('Erreur lors de la commande : ' + e.message);
+      return;
+    }
+    const code = 'PC-' + Math.floor(1000+Math.random()*9000);
+    state.cart = [];
+    await Promise.all([ refreshMyOrders(), loadCooksAndDishes() ]);
+    go('client','confirm',{lastCode:code});
+    return;
+  }
   const code = 'PC-' + Math.floor(1000+Math.random()*9000);
   state.cart = [];
   go('client','confirm',{lastCode:code});
@@ -721,14 +910,18 @@ function ViewConfirm(){
    CLIENT — ACCOUNT
    ============================================================ */
 function ViewAccount(){
+  if(supa && !state.session) return AuthForm('client');
+  const loggedIn = supa && state.session;
+  const orders = loggedIn ? state.myOrders : DATA.orders;
   return `
   <div class="wrap section">
     <div class="profile-hero" style="padding-top:0;">
-      <div class="avatar" style="background:var(--navy);">GS</div>
-      <div class="profile-meta"><h2 style="font-size:22px;">Mon compte</h2><p class="card-sub">Client PopCook depuis mars 2026</p></div>
+      <div class="avatar" style="background:var(--navy);">${loggedIn ? state.session.user.email[0].toUpperCase() : 'GS'}</div>
+      <div class="profile-meta"><h2 style="font-size:22px;">Mon compte</h2><p class="card-sub">${loggedIn ? state.session.user.email : 'Client PopCook depuis mars 2026'}</p></div>
+      ${loggedIn ? `<button class="btn btn-ghost btn-sm" style="margin-left:auto;" onclick="logout()">Se déconnecter</button>` : ''}
     </div>
     <h3 style="font-size:17px; margin:24px 0 14px;">Historique des commandes</h3>
-    ${DATA.orders.map(o=>{
+    ${orders.length===0 ? '<p class="card-sub">Aucune commande pour l’instant.</p>' : orders.map(o=>{
       const d = allDishes().find(x=>x.name===o.dishName);
       return `
       <div class="list-row">
@@ -752,7 +945,8 @@ function statusLabel(s){
    CLIENT — LEAVE REVIEW
    ============================================================ */
 function ViewReview(){
-  const o = DATA.orders.find(x=>x.id===state.reviewDraft.orderId) || DATA.orders[0];
+  const orders = (supa && state.session) ? state.myOrders : DATA.orders;
+  const o = orders.find(x=>x.id===state.reviewDraft.orderId) || orders[0];
   return `
   <div class="wrap section">
     <div class="form-card">
@@ -770,10 +964,16 @@ function ViewReview(){
   </div>`;
 }
 function setRating(n){ state.reviewDraft.rating = n; render(); }
-function submitReview(orderId){
+async function submitReview(orderId){
   const text = document.getElementById('review-text').value;
-  const o = DATA.orders.find(x=>x.id===orderId);
-  if(o) o.reviewed = true;
+  if(supa && state.session){
+    const { error } = await supa.from('orders').update({reviewed:true}).eq('id', orderId).eq('client_id', state.session.user.id);
+    if(error){ showToast('Erreur : ' + error.message); return; }
+    await refreshMyOrders();
+  } else {
+    const o = DATA.orders.find(x=>x.id===orderId);
+    if(o) o.reviewed = true;
+  }
   showToast('Merci pour votre avis !');
   go('client','account');
 }
@@ -782,23 +982,24 @@ function submitReview(orderId){
    COOK — DASHBOARD
    ============================================================ */
 function ViewCookDashboard(){
-  const today = DATA.cookOrders;
+  const gate = CookGate(); if(gate) return gate;
+  const { cook, orders: today } = currentCookData();
   const pending = today.filter(o=>o.status==='attente').length;
   const earnings = today.filter(o=>o.status!=='annulee').reduce((s,o)=>s+o.total,0);
   return `
   <div class="wrap section">
-    <div class="section-head"><div><h2>Bonjour Élodie 👋</h2><p>Voici votre activité du jour</p></div>
+    <div class="section-head"><div><h2>Bonjour ${cook.name.split(' ')[0]} 👋</h2><p>Voici votre activité du jour</p></div>
       <button class="btn btn-primary" onclick="go('cook','add-dish')">+ Ajouter un plat</button>
     </div>
     <div class="kpi-grid">
-      <div class="kpi-card"><div class="num">${today.length}</div><div class="lbl">Commandes aujourd'hui</div><div class="delta">+2 vs hier</div></div>
+      <div class="kpi-card"><div class="num">${today.length}</div><div class="lbl">Commandes aujourd'hui</div></div>
       <div class="kpi-card"><div class="num">${pending}</div><div class="lbl">En attente de préparation</div></div>
-      <div class="kpi-card"><div class="num">${earnings} €</div><div class="lbl">Gains du jour</div><div class="delta">+18% vs hier</div></div>
-      <div class="kpi-card"><div class="num">4,8 ★</div><div class="lbl">Note moyenne</div></div>
+      <div class="kpi-card"><div class="num">${earnings} €</div><div class="lbl">Gains du jour</div></div>
+      <div class="kpi-card"><div class="num">${String(cook.rating).replace('.',',')} ★</div><div class="lbl">Note moyenne</div></div>
     </div>
     <div class="panel">
       <h3>Commandes récentes</h3>
-      ${today.slice(0,3).map(CookOrderRow).join('')}
+      ${today.slice(0,3).map(CookOrderRow).join('') || '<p class="card-sub">Aucune commande pour l’instant.</p>'}
       <button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="go('cook','orders')">Voir toutes les commandes</button>
     </div>
   </div>`;
@@ -808,22 +1009,23 @@ function ViewCookDashboard(){
    COOK — MY DISHES
    ============================================================ */
 function ViewCookDishes(){
-  const cook = DATA.cooks[0];
+  const gate = CookGate(); if(gate) return gate;
+  const { cook } = currentCookData();
   return `
   <div class="wrap section">
     <div class="section-head"><div><h2>Mes plats</h2><p>${cook.dishes.length} plats publiés</p></div>
       <button class="btn btn-primary" onclick="go('cook','add-dish')">+ Ajouter un plat</button>
     </div>
     <div class="grid">
-      ${cook.dishes.map(d=>`
+      ${cook.dishes.length===0 ? '<p class="card-sub">Aucun plat publié pour l’instant.</p>' : cook.dishes.map(d=>`
         <div class="card" style="cursor:default;">
           <div class="card-media ${d.ph}">${d.photo?`<img src="${d.photo}" alt="${d.name}" class="media-photo" loading="lazy" onerror="this.remove()">`:''}${phIcon(d.kind)}<span class="qty-badge">${d.qty} dispo.</span></div>
           <div class="card-body">
             <h4>${d.name}</h4>
             <p class="card-sub">${d.price} € · Retrait ${d.slot}</p>
             <div style="display:flex; gap:8px; margin-top:10px;">
-              <button class="btn btn-ghost btn-sm" style="flex:1;" onclick="event.stopPropagation(); showToast('Édition simulée')">Modifier</button>
-              <button class="btn btn-danger btn-sm" style="flex:1;" onclick="event.stopPropagation(); showToast('Plat désactivé')">Désactiver</button>
+              <button class="btn btn-ghost btn-sm" style="flex:1;" onclick="event.stopPropagation(); showToast('Édition à venir')">Modifier</button>
+              <button class="btn btn-danger btn-sm" style="flex:1;" onclick="event.stopPropagation(); disableDish('${d.id}')">Désactiver</button>
             </div>
           </div>
         </div>`).join('')}
@@ -831,23 +1033,49 @@ function ViewCookDishes(){
   </div>`;
 }
 
+async function disableDish(id){
+  if(supa && state.myCook){
+    const { error } = await supa.from('dishes').update({qty:0}).eq('id', id).eq('cook_id', state.myCook.id);
+    if(error){ showToast('Erreur : ' + error.message); return; }
+    await refreshMyCook();
+    showToast('Plat désactivé');
+    render();
+    return;
+  }
+  const d = DATA.cooks[0].dishes.find(x=>x.id===id);
+  if(d) d.qty = 0;
+  showToast('Plat désactivé');
+  render();
+}
+
 /* ============================================================
    COOK — ADD DISH
    ============================================================ */
 const ALLERGEN_OPTIONS = ['Gluten','Lactose','Œuf','Fruits à coque','Arachide','Sésame','Poisson','Crustacés','Soja'];
 let selectedAllergens = [];
+const DISH_KIND_OPTIONS = [
+  ['tajine','Plat mijoté (tajine, ragoût…)'], ['mezze','Mezze / entrée'], ['grillade','Grillade'],
+  ['poisson','Poisson'], ['pates','Pâtes'], ['dessert','Dessert'],
+];
 function ViewAddDish(){
+  const gate = CookGate(); if(gate) return gate;
+  selectedAllergens = [];
   return `
   <div class="wrap section">
     <h2 style="margin-bottom:20px;">Ajouter un plat</h2>
     <div class="form-card">
-      <div class="field"><label>Nom du plat</label><input type="text" placeholder="Ex. Tajine d'agneau aux pruneaux"></div>
-      <div class="field"><label>Description</label><textarea placeholder="Décrivez votre plat, les ingrédients, la préparation…"></textarea></div>
-      <div class="field-row">
-        <div class="field"><label>Prix (€)</label><input type="number" placeholder="14"></div>
-        <div class="field"><label>Quantité disponible</label><input type="number" placeholder="6"></div>
+      <div class="field"><label>Nom du plat</label><input type="text" id="dish-name" placeholder="Ex. Tajine d'agneau aux pruneaux"></div>
+      <div class="field"><label>Description</label><textarea id="dish-desc" placeholder="Décrivez votre plat, les ingrédients, la préparation…"></textarea></div>
+      <div class="field"><label>Catégorie</label>
+        <select id="dish-kind" style="width:100%; padding:12px 14px; border-radius:var(--radius-md); border:1.5px solid var(--line); font-family:var(--font-body); font-size:14px;">
+          ${DISH_KIND_OPTIONS.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}
+        </select>
       </div>
-      <div class="field"><label>Créneau de retrait</label><input type="text" placeholder="Ex. 12h00 – 13h30"></div>
+      <div class="field-row">
+        <div class="field"><label>Prix (€)</label><input type="number" id="dish-price" placeholder="14"></div>
+        <div class="field"><label>Quantité disponible</label><input type="number" id="dish-qty" placeholder="6"></div>
+      </div>
+      <div class="field"><label>Créneau de retrait</label><input type="text" id="dish-slot" placeholder="Ex. 12h00 – 13h30"></div>
       <div class="field">
         <label>Allergènes présents (obligatoire)</label>
         <div class="check-row" id="allergen-row">
@@ -866,8 +1094,33 @@ function ViewAddDish(){
 }
 function toggleAllergen(el, name){
   el.classList.toggle('on');
+  if(selectedAllergens.includes(name)) selectedAllergens = selectedAllergens.filter(a=>a!==name);
+  else selectedAllergens.push(name);
 }
-function publishDish(){
+async function publishDish(){
+  const name = document.getElementById('dish-name').value.trim();
+  const desc = document.getElementById('dish-desc').value.trim();
+  const kind = document.getElementById('dish-kind').value;
+  const price = parseFloat(document.getElementById('dish-price').value);
+  const qty = parseInt(document.getElementById('dish-qty').value, 10);
+  const slot = document.getElementById('dish-slot').value.trim();
+  if(!name || !price || !qty || !slot || selectedAllergens.length===0){
+    showToast('Merci de compléter tous les champs et les allergènes');
+    return;
+  }
+  if(supa && state.myCook){
+    const { error } = await supa.from('dishes').insert({
+      cook_id: state.myCook.id, name, description: desc, kind, price, qty, slot, allergens: selectedAllergens,
+    });
+    if(error){ showToast('Erreur : ' + error.message); return; }
+    await refreshMyCook();
+  } else {
+    DATA.cooks[0].dishes.unshift({
+      id: 'd'+Date.now(), cookId: DATA.cooks[0].id, name, ph: KIND_PH[kind]||'ph-1', kind, desc,
+      price, allergens: [...selectedAllergens], qty, slot, tag: null, photo: null,
+    });
+  }
+  selectedAllergens = [];
   showToast('Plat publié avec succès');
   go('cook','dishes');
 }
@@ -889,13 +1142,23 @@ function CookOrderRow(o){
   </div>`;
 }
 function ViewCookOrders(){
+  const gate = CookGate(); if(gate) return gate;
+  const { orders } = currentCookData();
   return `
   <div class="wrap section">
-    <div class="section-head"><div><h2>Commandes reçues</h2><p>${DATA.cookOrders.length} commandes au total</p></div></div>
-    ${DATA.cookOrders.map(CookOrderRow).join('')}
+    <div class="section-head"><div><h2>Commandes reçues</h2><p>${orders.length} commandes au total</p></div></div>
+    ${orders.map(CookOrderRow).join('') || '<p class="card-sub">Aucune commande pour l’instant.</p>'}
   </div>`;
 }
-function updateOrderStatus(id, status){
+async function updateOrderStatus(id, status){
+  if(supa && state.myCook){
+    const { error } = await supa.from('orders').update({status}).eq('id', id).eq('cook_id', state.myCook.id);
+    if(error){ showToast('Erreur : ' + error.message); return; }
+    await refreshMyCook();
+    showToast('Statut mis à jour : ' + statusLabel(status));
+    render();
+    return;
+  }
   const o = DATA.cookOrders.find(x=>x.id===id);
   if(o) o.status = status;
   showToast('Statut mis à jour : ' + statusLabel(status));
@@ -906,33 +1169,25 @@ function updateOrderStatus(id, status){
    COOK — EARNINGS
    ============================================================ */
 function ViewCookEarnings(){
-  const paid = DATA.cookOrders.filter(o=>o.status==='retiree').reduce((s,o)=>s+o.total,0);
-  const pending = DATA.cookOrders.filter(o=>o.status==='confirmee'||o.status==='attente').reduce((s,o)=>s+o.total,0);
+  const gate = CookGate(); if(gate) return gate;
+  const { orders } = currentCookData();
+  const paid = orders.filter(o=>o.status==='retiree').reduce((s,o)=>s+o.total,0);
+  const pending = orders.filter(o=>o.status==='confirmee'||o.status==='attente').reduce((s,o)=>s+o.total,0);
   return `
   <div class="wrap section">
     <h2 style="margin-bottom:20px;">Mes revenus</h2>
+    <p class="card-sub" style="margin:-14px 0 20px;">Le client paie directement au retrait — ces montants sont une estimation, PopCook ne gère pas encore les paiements.</p>
     <div class="kpi-grid">
-      <div class="kpi-card"><div class="num">${paid} €</div><div class="lbl">Solde disponible</div></div>
-      <div class="kpi-card"><div class="num">${pending} €</div><div class="lbl">En attente de retrait</div></div>
-      <div class="kpi-card"><div class="num">87 %</div><div class="lbl">Commission conservée</div></div>
+      <div class="kpi-card"><div class="num">${paid} €</div><div class="lbl">Déjà encaissé (commandes retirées)</div></div>
+      <div class="kpi-card"><div class="num">${pending} €</div><div class="lbl">À venir (commandes en cours)</div></div>
     </div>
     <div class="panel">
-      <h3>Connexion Stripe</h3>
-      <div class="list-row" style="border:none; padding:0;">
-        <div class="grow">
-          <p style="font-weight:700; color:var(--navy);">Compte Stripe Connect</p>
-          <p class="card-sub">Virements automatiques chaque lundi</p>
-        </div>
-        <span class="status-pill status-retiree">Connecté</span>
-      </div>
-    </div>
-    <div class="panel">
-      <h3>Historique des paiements</h3>
-      ${DATA.cookOrders.filter(o=>o.status==='retiree').map(o=>`
+      <h3>Historique des commandes retirées</h3>
+      ${orders.filter(o=>o.status==='retiree').map(o=>`
         <div class="list-row">
           <div class="grow"><p style="font-weight:600;">${o.dish}</p><p class="card-sub">#${o.id}</p></div>
           <p style="font-weight:800; color:var(--sage);">+${o.total} €</p>
-        </div>`).join('') || '<p class="card-sub">Aucun paiement encore.</p>'}
+        </div>`).join('') || '<p class="card-sub">Aucune commande retirée encore.</p>'}
     </div>
   </div>`;
 }
@@ -1045,6 +1300,7 @@ function render(){
 }
 
 render();
+initSupabase();
 </script>
 </body>
 </html>
